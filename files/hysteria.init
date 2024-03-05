@@ -4,28 +4,7 @@ USE_PROCD=1
 START=55
 
 package=$(basename $(readlink -f "$initscript"))
-prog="/usr/bin/hysteria"
-tmpdir="/var/run/$package"
-
-mkdir -p $tmpdir
-
-prepare_dir() {
-	for filepath; do
-		mkdir -p $(dirname "$filepath")
-	done
-}
-
-add_quotes_if_string() {
-	for arg; do
-		local type=$(echo -n $arg |
-			jq type --raw-output 2>/dev/null ||
-			echo -n 'string')
-
-		[ "$type" == 'string' ] &&
-			echo \"$arg\" ||
-			echo "$arg"
-	done
-}
+prog="/usr/bin/${package}"
 
 _is_enabled() {
 	local instance="$1"; shift
@@ -36,77 +15,11 @@ _is_enabled() {
 	[ "$enabled" == "1" ] || return 1
 }
 
-_load_config() {
-	local config_patch
-	local enabled
-	local confdir
-	local conffile
-	local type
-	local instance
-
-	config_cb() {
-		[ "$#" == "0" ] && {
-			local config_tmp="$tmpdir/$type/$instance"
-			[ "$enabled" == "1" ] || {
-				rm -f "$config_tmp"
-			 	return
-			}
-
-			[ -e "$conffile" ] && config=$(cat $conffile)
-			[ -z "$conffile" ] &&
-				conffile="$confdir/$type-$instance.json"
-
-			local config="{}"
-			config=$(echo $config | jq "$config_patch" -cM)
-
-			prepare_dir $config_tmp
-			[ -f "$config_tmp" ] &&
-				echo $config | jd -set $config_tmp 1>/dev/null 2>/dev/null ||
-				echo $config > $config_tmp
-
-			return
-		}
-
-		type="$1"; shift
-		instance="$1"; shift
-
-		config_patch=""
-		enabled="0"
-		confdir="/etc/$package"
-		conffile=""
-	}
-
-	option_cb() {
-		local name="$1"; shift
-		local value="$1"; shift
-
-		case "$name" in
-			enabled)
-				enabled=$(get_bool $value)
-				;;
-			confdir|conffile)
-				$name=$value
-				;;
-			*)
-				value=$(add_quotes_if_string "$value")
-				append config_patch ".$name=$value" "|"
-				;;
-		esac
-	}
-
-	list_cb() {
-		local name="$1"; shift
-		local value=$(add_quotes_if_string "$1"); shift
-
-		append config_patch ".$name+=[$value]" "|"
-	}
-
-	config_load "$package"
-	reset_cb
-}
-
 hysteria_start() {
 	local instance=$1; shift
+
+	local confdir
+	local conffile
 
 	local type
 	config_get type $instance TYPE
@@ -116,14 +29,22 @@ hysteria_start() {
 		return
 	}
 
-	local config_tmp="$tmpdir/$type/$instance"
+	local conffile
+	config_get conffile  $instance conffile "$type-$instance.yaml"
+
+	[ "${conffile:0:1}" != "/" ] && {
+		local confdir
+		config_get confdir $instance confdir "/etc/$package"
+		conffile="${confdir}/${conffile}"
+	}
 
 	procd_open_instance "$instance"
 	procd_set_param command "$prog" "$type"
-	procd_append_param command --config "$config_tmp"
+	procd_append_param command --disable-update-check
+	procd_append_param command --config "$conffile"
 
 	procd_set_param data "type=$type"
-	procd_set_param file "$config_tmp"
+	procd_set_param file "$conffile"
 
 	procd_set_param limits core="unlimited"
 	local nofile=$(cat /proc/sys/fs/nr_open)
@@ -140,19 +61,10 @@ hysteria_start() {
 }
 
 start_service() {
-	_load_config
+	config_load "$package"
 
 	config_foreach hysteria_start server $@
  	config_foreach hysteria_start client $@
-}
-
-service_stopped() {
-	[ -d $tmpdir ] || return
-	for config_tmp in $(find $tmpdir -type f -maxdepth 2 -mindepth 2); do
-		local instance=$(basename $config_tmp)
-
-		status $instance 1>/dev/null || rm -f $config_tmp
-	done
 }
 
 service_triggers() {
