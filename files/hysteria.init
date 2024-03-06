@@ -30,7 +30,7 @@ hysteria_start() {
 	}
 
 	local conffile
-	config_get conffile  $instance conffile "$type-$instance.yaml"
+	config_get conffile $instance conffile "$type-$instance.yaml"
 
 	[ "${conffile:0:1}" != "/" ] && {
 		local confdir
@@ -42,6 +42,23 @@ hysteria_start() {
 	procd_set_param command "$prog" "$type"
 	procd_append_param command --disable-update-check
 	procd_append_param command --config "$conffile"
+
+	[ -x /sbin/ujail -a -e /etc/capabilities/$package.json ] && {
+		procd_add_jail $type log
+
+		procd_add_jail_mount "$conffile"
+
+		[ "$type" = "client" ] &&
+			procd_add_jail_mount "/etc/ssl/certs" ||
+			procd_add_jail_mount "/etc/acme" # TODO 自动判断证书位置、如果使用内置的acme还要赋予写权限
+
+		procd_set_param capabilities /etc/capabilities/$package.json
+
+		procd_set_param user hysteria
+		procd_set_param group hysteria
+
+		procd_set_param no_new_privs 1
+	}
 
 	procd_set_param data "type=$type"
 	procd_set_param file "$conffile"
