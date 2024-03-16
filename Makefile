@@ -12,7 +12,6 @@ PKG_MIRROR_HASH:=efc0fb47d43ba022ea4f2b7b296f80d43d6f75c5a57543364e9ea90b3fd81b6
 PKG_SOURCE_VERSION:=80bc3b3a443268d9c89b0f82071ec7f38006a1ba
 
 PKG_LICENSE:=MIT
-PKG_LICENSE_FILES:=LICENSE.md
 PKG_MAINTAINER:=Findlay Feng <i@fengch.me>
 
 PKG_BUILD_DEPENDS:=golang/host
@@ -39,7 +38,27 @@ define Package/$(PKG_NAME)
 	SUBMENU:=Web Servers/Proxies
 	TITLE:=A feature-packed proxy & relay tool optimized for lossy
 	URL:=https://hysteria.network
+endef
+
+define Package/$(PKG_NAME)-configs
+	$(call Package/$(PKG_NAME))
+	TITLE:=configs
+	DEPENDS:=$(PKG_NAME)
 	USERID:=hysteria=102:hysteria=102
+endef
+
+define Package/$(PKG_NAME)-serverd
+	$(call Package/$(PKG_NAME))
+	TITLE:=server init scripts
+	DEPENDS:=$(PKG_NAME) +$(PKG_NAME)-configs
+endef
+
+define Package/$(PKG_NAME)-clientd
+	$(call Package/$(PKG_NAME))
+	TITLE:=client init scripts
+	DEPENDS:=$(PKG_NAME) +$(PKG_NAME)-configs \
+		+kmod-nft-tproxy +kmod-nft-socket \
+		+dnsmasq-full
 endef
 
 define Package/$(PKG_NAME)/description
@@ -49,6 +68,18 @@ define Package/$(PKG_NAME)/description
 	by a customized protocol based on QUIC.
 endef
 
+define Package/$(PKG_NAME)-configs/description
+	$(call Package/$(PKG_NAME)/description)
+endef
+
+define Package/$(PKG_NAME)-serverd/description
+	$(call Package/$(PKG_NAME)/description)
+endef
+
+define Package/$(PKG_NAME)-clientd/description
+	$(call Package/$(PKG_NAME)/description)
+endef
+
 define Build/Compile
 	$(call GoPackage/Build/Compile)
 endef
@@ -56,31 +87,55 @@ endef
 define Package/$(PKG_NAME)/install
 	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
 
-	$(INSTALL_DIR) \
-		$(1)/usr/bin \
-		$(1)/lib/upgrade/keep.d \
-		$(1)/etc/init.d \
-		$(1)/etc/config \
-		$(1)/etc/sysctl.d \
-		$(1)/etc/capabilities \
-		$(1)/etc/$(PKG_NAME)
+	$(INSTALL_DIR) $(1)/usr/bin $(1)/etc/sysctl.d
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/app $(1)/usr/bin/$(PKG_NAME)
 
-	$(INSTALL_BIN) \
-		$(PKG_INSTALL_DIR)/usr/bin/app $(1)/usr/bin/$(PKG_NAME)
-	$(INSTALL_BIN) \
-		./files/hysteria.init $(1)/etc/init.d/$(PKG_NAME)
-	
-	$(INSTALL_CONF) ./files/hysteria.config $(1)/etc/config/$(PKG_NAME)
 	$(INSTALL_CONF) ./files/sysctl-hysteria.conf $(1)/etc/sysctl.d/11-$(PKG_NAME).conf
-	$(INSTALL_CONF) ./files/hysteria.json $(1)/etc/capabilities/$(PKG_NAME).json
-
-	$(INSTALL_DATA) ./files/configs/* $(1)/etc/$(PKG_NAME)/
 endef
 
-define Package/$(PKG_NAME)/conffiles
+define Package/$(PKG_NAME)-configs/install
+	$(INSTALL_DIR) \
+		$(1)/etc/config \
+		$(1)/etc/capabilities
+
+	$(INSTALL_CONF) ./files/hysteria.json $(1)/etc/capabilities/$(PKG_NAME).json
+	$(INSTALL_CONF) ./files/hysteria.config $(1)/etc/config/$(PKG_NAME)
+endef
+
+define Package/$(PKG_NAME)-serverd/install
+	$(INSTALL_DIR) \
+		$(1)/etc/init.d \
+		$(1)/etc/$(PKG_NAME)
+
+	$(INSTALL_BIN) ./files/hysteria-serverd.init $(1)/etc/init.d/$(PKG_NAME)-serverd
+	$(INSTALL_DATA) ./files/configs/server.yaml $(1)/etc/$(PKG_NAME)/
+endef
+
+define Package/$(PKG_NAME)-clientd/install
+	$(INSTALL_DIR) \
+		$(1)/etc/init.d \
+		$(1)/usr/share/$(PKG_NAME)/bin \
+		$(1)/etc/$(PKG_NAME)
+
+	$(INSTALL_BIN) ./files/hysteria.init $(1)/etc/init.d/$(PKG_NAME)
+	$(INSTALL_BIN) ./files/bin/hysteria-tproxy.sh $(1)/usr/share/$(PKG_NAME)/bin/set-tproxy
+	$(INSTALL_DATA) ./files/configs/client.yaml $(1)/etc/$(PKG_NAME)/
+endef
+
+define Package/$(PKG_NAME)-configs/conffiles
 /etc/config/$(PKG_NAME)
+endef
+
+define Package/$(PKG_NAME)-serverd/conffiles
+/etc/${PKG_NAME}/
+endef
+
+define Package/$(PKG_NAME)-clientd/conffiles
 /etc/${PKG_NAME}/
 endef
 
 $(eval $(call GoBinPackage,$(PKG_NAME)))
 $(eval $(call BuildPackage,$(PKG_NAME)))
+$(eval $(call BuildPackage,$(PKG_NAME)-configs))
+$(eval $(call BuildPackage,$(PKG_NAME)-serverd))
+$(eval $(call BuildPackage,$(PKG_NAME)-clientd))
